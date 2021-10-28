@@ -1,0 +1,2 @@
+docker build -t simple-python-server .
+docker run --name simple-python-server -p 3003:3003 simple-python-server 
