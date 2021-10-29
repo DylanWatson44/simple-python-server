@@ -1,53 +1,89 @@
 import json
 import requests
-import socketio
-import eventlet
 
-
-# from flask import Flask, request, abort, jsonify
-# import requests
-
-# app = Flask(__name__)
-
+from flask import Flask, request, abort, jsonify
+from flask_socketio import SocketIO, send, emit
 
 print("Starting server1")
-sio = socketio.Server(cors_allowed_origins='*')
-app = socketio.WSGIApp(sio)
-print("Starting server2")
-def serveTweets():
+app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins='*',
+                    logger=True, engineio_logger=True, async_mode="threading")
+
+# todo get from env
+BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAADuJVAEAAAAA%2FBVcOBmnzqmrMpuZfa6NiF3GMoM%3Duh6ufL1I9E46gKu9soqbFQXfJQEIwREONF9ZjZMWwDyOSL3EmO"
+
+
+# def serveTweets():
+
+
+@socketio.on('connect')
+def connected(auth):
+
     print("Getting stream")
-    headers = {"Authorization": "Bearer AAAAAAAAAAAAAAAAAAAAADuJVAEAAAAATYInirTCiVqAwq%2FBLiQ01qhhqP4%3Drq1TdI2zfj8jyRY7BdAyQILyOJgYTtc5BBVnYScXe6LmOmWKle"}
-    response = requests.get('https://api.twitter.com/2/tweets/search/stream?tweet.fields=context_annotations&expansions=author_id', headers=headers, stream=True)
-    while True:
-        print("possible response recieved")
+    headers = {"Authorization": f"Bearer {BEARER_TOKEN}"}
+    with requests.get(
+        'https://api.twitter.com/2/tweets/search/stream?tweet.fields=context_annotations&expansions=author_id', headers=headers, stream=True) as response:
+
+        print("possible response received")
         if response.encoding is None:
             response.encoding = 'utf-8'
 
-        for line in response.iter_lines():
+        # for i in range(3):
+        #     socketio.emit('tweet', {'data': {'author_id': '1206873813088178178', 'context_annotations': [{'domain': {'id': '10', 'name': 'Person', 'description': 'Named people in the world like Nelson Mandela'}, 'entity': {'id': '1270337060797202433', 'name': 'Shehnaaz Kaur Gill'}}, {'domain': {'id': '54', 'name': 'Musician', 'description': 'A musician in the world, like Adele or Bob Dylan'}, 'entity': {'id': '1270337060797202433', 'name': 'Shehnaaz Kaur Gill'}}], 'id': '1454028042079064064', 'text': 'RT @asjadnazir: What beautiful song Tu Yaheen Hai is and so wonderfully sung by @ishehnaaz_gill - you can really feel the emotion. 😭😭😭😭\n#Tu…'}, 'includes': {'users': [{'id': '1206873813088178178', 'name': 'Uma Nagar', 'username': 'UmaNagar3'}, {'id': '177983944', 'name': 'Asjad Nazir', 'username': 'asjadnazir'}, {'id': '1189446547622125571', 'name': 'Shehnaaz Gill', 'username': 'ishehnaaz_gill'}]}, 'matching_rules': [{'id': '1454026382070239237','tag': ''}]})
 
+        for line in response.iter_lines():
+            print("for line", line)
             # filter out keep-alive new lines
             if line:
                 decoded_line = line.decode('utf-8')
+                print("decoded_line", decoded_line)
                 data = json.loads(decoded_line)
-                print('got some data, ', data)
+                print('got some data, ')
 
-                sio.emit('tweet', data)
+                socketio.emit('tweet', data)
+
+                # break
+        
+
+    #serveTweets()
+
+    # socketio.emit('tweet', {'data': {'author_id': '1206873813088178178', 'context_annotations': [{'domain': {'id': '10', 'name': 'Person', 'description': 'Named people in the world like Nelson Mandela'}, 'entity': {'id': '1270337060797202433', 'name': 'Shehnaaz Kaur Gill'}}, {'domain': {'id': '54', 'name': 'Musician', 'description': 'A musician in the world, like Adele or Bob Dylan'}, 'entity': {'id': '1270337060797202433', 'name': 'Shehnaaz Kaur Gill'}}], 'id': '1454028042079064064', 'text': 'RT @asjadnazir: What beautiful song Tu Yaheen Hai is and so wonderfully sung by @ishehnaaz_gill - you can really feel the emotion. 😭😭😭😭\n#Tu…'}, 'includes': {'users': [{'id': '1206873813088178178', 'name': 'Uma Nagar', 'username': 'UmaNagar3'}, {'id': '177983944', 'name': 'Asjad Nazir', 'username': 'asjadnazir'}, {'id': '1189446547622125571', 'name': 'Shehnaaz Gill', 'username': 'ishehnaaz_gill'}]}, 'matching_rules': [{'id': '1454026382070239237','tag': ''}]})
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
 
 
-@sio.event
-def connect(sid, environ, auth):
-    print('connected ', sid)
-    serveTweets()
+@ socketio.on('disconnect')
+def disconnect():
+    print('Client disconnected')
 
-@sio.event
-def disconnect(sid):
-    print('disconnect ', sid)
 
-@sio.on('*')
-def catch_all(event, sid, data):
+@ socketio.on('*')
+def catch_all():
     print("I landed in the catch-all")
 
+
+@ app.route('/api/rules', methods = ['POST'])
+def add_rule():
+    if not request.json:
+        abort(400)
+    headers={"Authorization": f"Bearer {BEARER_TOKEN}",
+               "Content-Type": "application/json"}
+    print("posted data", type(request.json), request.json)
+    response=requests.post(
+        "https://api.twitter.com/2/tweets/search/stream/rules", headers = headers, data = json.dumps(request.json))
+    print('post response', response, response.json())
+    return {"body": response.json()}
+
+
+@ app.route('/api/rules', methods = ['get'])
+def get_rules():
+    headers={"Authorization": f"Bearer {BEARER_TOKEN}"}
+    response=requests.get(
+        "https://api.twitter.com/2/tweets/search/stream/rules", headers = headers, data = request.json)
+    print('get response', response, response.json())
+    return {"body": response.json()}
+
+
 if __name__ == '__main__':
-    print("Starting server3")
-    # socketio.run(app,host='',port=3001)
-    eventlet.wsgi.server(eventlet.listen(('', 3001)), app)
+    # serveTweets()
+    socketio.run(app, port = 3001)
+    # eventlet.wsgi.server(eventlet.listen(('', 3001)), app)

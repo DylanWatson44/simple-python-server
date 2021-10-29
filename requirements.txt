@@ -1,4 +1,4 @@
-eventlet
-python-socketio
 requests
 flask
+flask_socketio
+eventlet
