@@ -1,4 +1,5 @@
 requests
 flask
 flask_socketio
-eventlet
+flask_cors
+simple-websocket

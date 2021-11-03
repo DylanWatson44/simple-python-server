@@ -1,89 +1,137 @@
+# import eventlet
+# eventlet.monkey_patch()
 import json
 import requests
-
-from flask import Flask, request, abort, jsonify
+import traceback
+from threading import Thread, Event
+from flask import Flask, request, abort, jsonify, Response
+from flask_cors import CORS, cross_origin
 from flask_socketio import SocketIO, send, emit
 
-print("Starting server1")
+print("Starting server")
 app = Flask(__name__)
+cors = CORS(app)
 socketio = SocketIO(app, cors_allowed_origins='*',
-                    logger=True, engineio_logger=True, async_mode="threading")
+                    logger=True, engineio_logger=True, async_mode="threading", always_connect=True)
 
 # todo get from env
-BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAADuJVAEAAAAA%2FBVcOBmnzqmrMpuZfa6NiF3GMoM%3Duh6ufL1I9E46gKu9soqbFQXfJQEIwREONF9ZjZMWwDyOSL3EmO"
+BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAADuJVAEAAAAA1l87uzCkygNEtgdWFus0SnmUJfs%3D4hvD9Jy4sHRNgU6pxvfYnqj5iE9WkXEUMswxbQIMRu6hugNe8Q"
+
+thread = Thread()
+thread_stop_event = Event()
+
+tweetDict = {}
+sidList = []
 
 
-# def serveTweets():
+def serveTweets():
+    print("Getting stream")
+    headers = {"Authorization": f"Bearer {BEARER_TOKEN}"}
+    with requests.get(
+            'https://api.twitter.com/2/tweets/search/stream?tweet.fields=context_annotations,text&expansions=author_id&user.fields=profile_image_url', headers=headers, stream=True) as response:
+
+        print("stream response received")
+        if response.encoding is None:
+            response.encoding = 'utf-8'
+
+        for line in response.iter_lines():
+            if(thread_stop_event.isSet()):
+                break
+
+            # filter out keep-alive new lines
+            if line:
+                try:
+                    decoded_line = line.decode('utf-8')
+                    data = json.loads(decoded_line)
+                    if "errors" in data:
+                        socketio.emit('error', data)
+                    else:
+                        tweetId = data["data"]["id"]
+                        if(tweetId not in tweetDict):
+                            tweetDict[tweetId] = True
+                            tweetText = data["data"]["text"]
+                            if tweetText.startswith('RT'):
+                                continue
+
+                            socketio.emit('tweet', data)
+                except Exception as err:
+                    print("An exception occurred", err)
+                    traceback.print_exc()
 
 
 @socketio.on('connect')
 def connected(auth):
-
-    print("Getting stream")
-    headers = {"Authorization": f"Bearer {BEARER_TOKEN}"}
-    with requests.get(
-        'https://api.twitter.com/2/tweets/search/stream?tweet.fields=context_annotations&expansions=author_id', headers=headers, stream=True) as response:
-
-        print("possible response received")
-        if response.encoding is None:
-            response.encoding = 'utf-8'
-
-        # for i in range(3):
-        #     socketio.emit('tweet', {'data': {'author_id': '1206873813088178178', 'context_annotations': [{'domain': {'id': '10', 'name': 'Person', 'description': 'Named people in the world like Nelson Mandela'}, 'entity': {'id': '1270337060797202433', 'name': 'Shehnaaz Kaur Gill'}}, {'domain': {'id': '54', 'name': 'Musician', 'description': 'A musician in the world, like Adele or Bob Dylan'}, 'entity': {'id': '1270337060797202433', 'name': 'Shehnaaz Kaur Gill'}}], 'id': '1454028042079064064', 'text': 'RT @asjadnazir: What beautiful song Tu Yaheen Hai is and so wonderfully sung by @ishehnaaz_gill - you can really feel the emotion. 😭😭😭😭\n#Tu…'}, 'includes': {'users': [{'id': '1206873813088178178', 'name': 'Uma Nagar', 'username': 'UmaNagar3'}, {'id': '177983944', 'name': 'Asjad Nazir', 'username': 'asjadnazir'}, {'id': '1189446547622125571', 'name': 'Shehnaaz Gill', 'username': 'ishehnaaz_gill'}]}, 'matching_rules': [{'id': '1454026382070239237','tag': ''}]})
-
-        for line in response.iter_lines():
-            print("for line", line)
-            # filter out keep-alive new lines
-            if line:
-                decoded_line = line.decode('utf-8')
-                print("decoded_line", decoded_line)
-                data = json.loads(decoded_line)
-                print('got some data, ')
-
-                socketio.emit('tweet', data)
-
-                # break
-        
-
-    #serveTweets()
-
-    # socketio.emit('tweet', {'data': {'author_id': '1206873813088178178', 'context_annotations': [{'domain': {'id': '10', 'name': 'Person', 'description': 'Named people in the world like Nelson Mandela'}, 'entity': {'id': '1270337060797202433', 'name': 'Shehnaaz Kaur Gill'}}, {'domain': {'id': '54', 'name': 'Musician', 'description': 'A musician in the world, like Adele or Bob Dylan'}, 'entity': {'id': '1270337060797202433', 'name': 'Shehnaaz Kaur Gill'}}], 'id': '1454028042079064064', 'text': 'RT @asjadnazir: What beautiful song Tu Yaheen Hai is and so wonderfully sung by @ishehnaaz_gill - you can really feel the emotion. 😭😭😭😭\n#Tu…'}, 'includes': {'users': [{'id': '1206873813088178178', 'name': 'Uma Nagar', 'username': 'UmaNagar3'}, {'id': '177983944', 'name': 'Asjad Nazir', 'username': 'asjadnazir'}, {'id': '1189446547622125571', 'name': 'Shehnaaz Gill', 'username': 'ishehnaaz_gill'}]}, 'matching_rules': [{'id': '1454026382070239237','tag': ''}]})
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+    socketio.emit('connected with sid', request.sid)
+    sidList.append(request.sid)
+    global thread
+    print('Client connected')
+    thread_stop_event.clear()
+    if not thread.is_alive():
+        print("Starting Thread")
+        thread = socketio.start_background_task(serveTweets)
 
 
-@ socketio.on('disconnect')
+@socketio.on('disconnect')
 def disconnect():
+    sidList.remove(request.sid)
+    if(len(sidList) <= 0):
+        thread_stop_event.set()
+        delete_rule("red-team")
+        delete_rule("blue-team")
     print('Client disconnected')
 
 
-@ socketio.on('*')
-def catch_all():
-    print("I landed in the catch-all")
-
-
-@ app.route('/api/rules', methods = ['POST'])
+@app.route('/api/rules', methods=['POST'])
+@cross_origin()
 def add_rule():
     if not request.json:
-        abort(400)
-    headers={"Authorization": f"Bearer {BEARER_TOKEN}",
+        error_message = json.dumps({"error": "Missing body"})
+        print("Returning error to client", error_message)
+        abort(Response(error_message, 401))
+
+    headers = {"Authorization": f"Bearer {BEARER_TOKEN}",
                "Content-Type": "application/json"}
-    print("posted data", type(request.json), request.json)
-    response=requests.post(
-        "https://api.twitter.com/2/tweets/search/stream/rules", headers = headers, data = json.dumps(request.json))
+
+    response = requests.post(
+        "https://api.twitter.com/2/tweets/search/stream/rules", headers=headers, data=json.dumps(request.json))
+    return {"body": response.json()}
+
+
+@app.route('/api/rules/<team>', methods=['DELETE'])
+@cross_origin()
+def delete_rule(team):
+    print("delete started for team", team)
+    if not team:
+        error_message = json.dumps({"error": "Missing team in path"})
+        print("Returning error to client", error_message)
+        abort(Response(error_message, 401))
+
+    rules = get_rules()
+    print('rules acquired', rules)
+
+    rulesTodelete = [x["id"]
+                     for x in rules["body"]["data"] if x["tag"] == team]
+
+    payload = {"delete": {"ids": rulesTodelete}}
+
+    print("payload", payload)
+
+    headers = {"Authorization": f"Bearer {BEARER_TOKEN}",
+               "Content-Type": "application/json"}
+
+    response = requests.post(
+        "https://api.twitter.com/2/tweets/search/stream/rules", headers=headers, data=json.dumps(payload))
     print('post response', response, response.json())
     return {"body": response.json()}
 
 
-@ app.route('/api/rules', methods = ['get'])
+@app.route('/api/rules', methods=['get'])
 def get_rules():
-    headers={"Authorization": f"Bearer {BEARER_TOKEN}"}
-    response=requests.get(
-        "https://api.twitter.com/2/tweets/search/stream/rules", headers = headers, data = request.json)
-    print('get response', response, response.json())
+    headers = {"Authorization": f"Bearer {BEARER_TOKEN}"}
+    response = requests.get(
+        "https://api.twitter.com/2/tweets/search/stream/rules", headers=headers)
     return {"body": response.json()}
 
 
 if __name__ == '__main__':
-    # serveTweets()
-    socketio.run(app, port = 3001)
-    # eventlet.wsgi.server(eventlet.listen(('', 3001)), app)
+    socketio.run(app, host='0.0.0.0', port=3001)
